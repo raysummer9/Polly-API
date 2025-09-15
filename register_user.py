@@ -9,6 +9,62 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
+def _validate_user_out_schema(data: Dict[str, Any]) -> bool:
+    """Validate UserOut schema: id (int), username (str)"""
+    if not isinstance(data, dict):
+        return False
+    return (
+        isinstance(data.get("id"), int) and
+        isinstance(data.get("username"), str)
+    )
+
+
+def _validate_token_schema(data: Dict[str, Any]) -> bool:
+    """Validate Token schema: access_token (str), token_type (str)"""
+    if not isinstance(data, dict):
+        return False
+    return (
+        isinstance(data.get("access_token"), str) and
+        isinstance(data.get("token_type"), str)
+    )
+
+
+def _validate_poll_out_schema(data: Dict[str, Any]) -> bool:
+    """Validate PollOut schema: id (int), question (str), created_at (str), owner_id (int), options (array)"""
+    if not isinstance(data, dict):
+        return False
+    return (
+        isinstance(data.get("id"), int) and
+        isinstance(data.get("question"), str) and
+        isinstance(data.get("created_at"), str) and
+        isinstance(data.get("owner_id"), int) and
+        isinstance(data.get("options"), list)
+    )
+
+
+def _validate_vote_out_schema(data: Dict[str, Any]) -> bool:
+    """Validate VoteOut schema: id (int), user_id (int), option_id (int), created_at (str)"""
+    if not isinstance(data, dict):
+        return False
+    return (
+        isinstance(data.get("id"), int) and
+        isinstance(data.get("user_id"), int) and
+        isinstance(data.get("option_id"), int) and
+        isinstance(data.get("created_at"), str)
+    )
+
+
+def _validate_poll_results_schema(data: Dict[str, Any]) -> bool:
+    """Validate PollResults schema: poll_id (int), question (str), results (array)"""
+    if not isinstance(data, dict):
+        return False
+    return (
+        isinstance(data.get("poll_id"), int) and
+        isinstance(data.get("question"), str) and
+        isinstance(data.get("results"), list)
+    )
+
+
 def register_user(username: str, password: str, base_url: str = "http://localhost:8000") -> Optional[Dict[str, Any]]:
     """
     Register a new user via the /register endpoint.
@@ -24,6 +80,15 @@ def register_user(username: str, password: str, base_url: str = "http://localhos
     Raises:
         requests.RequestException: If there's an error with the HTTP request
     """
+    # Validate required fields according to UserCreate schema
+    if not username or not isinstance(username, str):
+        logger.error("Username is required and must be a string")
+        return None
+    
+    if not password or not isinstance(password, str):
+        logger.error("Password is required and must be a string")
+        return None
+    
     url = f"{base_url}/register"
     
     # Prepare the request data according to the UserCreate schema
@@ -45,11 +110,19 @@ def register_user(username: str, password: str, base_url: str = "http://localhos
         if response.status_code == 200:
             # Return the user data (UserOut schema)
             user_data = response.json()
+            # Validate response schema
+            if not _validate_user_out_schema(user_data):
+                logger.error("Invalid UserOut schema received from server")
+                return None
             logger.info(f"User '{username}' registered successfully with ID: {user_data.get('id')}")
             return user_data
         elif response.status_code == 400:
             # Username already registered
             logger.warning(f"Registration failed: Username '{username}' is already registered")
+            return None
+        elif response.status_code == 422:
+            # Validation error
+            logger.error(f"Registration failed: Validation error - {response.text}")
             return None
         else:
             # Other error
@@ -162,15 +235,25 @@ def fetch_polls(skip: int = 0, limit: int = 10, base_url: str = "http://localhos
         # Check if the request was successful
         if response.status_code == 200:
             # Return the list of polls
-            return response.json()
+            polls_data = response.json()
+            # Validate that it's a list
+            if not isinstance(polls_data, list):
+                logger.error("Expected array of polls, got non-array response")
+                return None
+            # Validate each poll in the array
+            for i, poll in enumerate(polls_data):
+                if not _validate_poll_out_schema(poll):
+                    logger.error(f"Invalid PollOut schema at index {i}")
+                    return None
+            logger.info(f"Successfully fetched {len(polls_data)} polls")
+            return polls_data
         else:
             # Handle error response
-            print(f"Error: Unexpected status code {response.status_code}")
-            print(f"Response: {response.text}")
+            logger.error(f"Failed to fetch polls with status code {response.status_code}: {response.text}")
             return None
             
     except requests.RequestException as e:
-        print(f"Request failed: {e}")
+        logger.error(f"Polls fetch request failed: {e}")
         raise
 
 
@@ -332,6 +415,15 @@ def login_user(username: str, password: str, base_url: str = "http://localhost:8
     Raises:
         requests.RequestException: If there's an error with the HTTP request
     """
+    # Validate required fields according to login schema
+    if not username or not isinstance(username, str):
+        logger.error("Username is required and must be a string")
+        return None
+    
+    if not password or not isinstance(password, str):
+        logger.error("Password is required and must be a string")
+        return None
+    
     url = f"{base_url}/login"
     
     # Prepare form data according to the OpenAPI spec (application/x-www-form-urlencoded)
@@ -352,11 +444,19 @@ def login_user(username: str, password: str, base_url: str = "http://localhost:8
         if response.status_code == 200:
             # Return the token data (Token schema)
             token_data = response.json()
+            # Validate response schema
+            if not _validate_token_schema(token_data):
+                logger.error("Invalid Token schema received from server")
+                return None
             logger.info(f"User '{username}' logged in successfully")
             return token_data
         elif response.status_code == 400:
             # Incorrect username or password
             logger.warning(f"Login failed: Incorrect username or password for '{username}'")
+            return None
+        elif response.status_code == 422:
+            # Validation error
+            logger.error(f"Login failed: Validation error - {response.text}")
             return None
         else:
             # Other error
@@ -384,6 +484,23 @@ def create_poll(question: str, options: List[str], access_token: str, base_url: 
     Raises:
         requests.RequestException: If there's an error with the HTTP request
     """
+    # Validate required fields according to PollCreate schema
+    if not question or not isinstance(question, str):
+        logger.error("Question is required and must be a string")
+        return None
+    
+    if not options or not isinstance(options, list) or len(options) == 0:
+        logger.error("Options is required and must be a non-empty list of strings")
+        return None
+    
+    if not all(isinstance(option, str) and option.strip() for option in options):
+        logger.error("All options must be non-empty strings")
+        return None
+    
+    if not access_token or not isinstance(access_token, str):
+        logger.error("Access token is required and must be a string")
+        return None
+    
     url = f"{base_url}/polls"
     
     # Prepare the request data according to the PollCreate schema
@@ -406,11 +523,19 @@ def create_poll(question: str, options: List[str], access_token: str, base_url: 
         if response.status_code == 200:
             # Return the poll data (PollOut schema)
             poll_data = response.json()
+            # Validate response schema
+            if not _validate_poll_out_schema(poll_data):
+                logger.error("Invalid PollOut schema received from server")
+                return None
             logger.info(f"Poll created successfully with ID: {poll_data.get('id')}")
             return poll_data
         elif response.status_code == 401:
             # Unauthorized
             logger.warning("Poll creation failed: Unauthorized - invalid or expired token")
+            return None
+        elif response.status_code == 422:
+            # Validation error
+            logger.error(f"Poll creation failed: Validation error - {response.text}")
             return None
         else:
             # Other error
@@ -459,6 +584,10 @@ def vote_on_poll(poll_id: int, option_id: int, access_token: str, base_url: str 
         if response.status_code == 200:
             # Return the vote data (VoteOut schema)
             vote_data = response.json()
+            # Validate response schema
+            if not _validate_vote_out_schema(vote_data):
+                logger.error("Invalid VoteOut schema received from server")
+                return None
             logger.info(f"Vote recorded successfully with ID: {vote_data.get('id')}")
             return vote_data
         elif response.status_code == 401:
@@ -468,6 +597,10 @@ def vote_on_poll(poll_id: int, option_id: int, access_token: str, base_url: str 
         elif response.status_code == 404:
             # Poll or option not found
             logger.warning(f"Vote failed: Poll {poll_id} or option {option_id} not found")
+            return None
+        elif response.status_code == 422:
+            # Validation error
+            logger.error(f"Vote failed: Validation error - {response.text}")
             return None
         else:
             # Other error
@@ -552,6 +685,10 @@ def get_poll_by_id(poll_id: int, base_url: str = "http://localhost:8000") -> Opt
         if response.status_code == 200:
             # Return the poll data (PollOut schema)
             poll_data = response.json()
+            # Validate response schema
+            if not _validate_poll_out_schema(poll_data):
+                logger.error("Invalid PollOut schema received from server")
+                return None
             logger.info(f"Poll {poll_id} fetched successfully")
             return poll_data
         elif response.status_code == 404:
@@ -592,6 +729,10 @@ def get_poll_results(poll_id: int, base_url: str = "http://localhost:8000") -> O
         if response.status_code == 200:
             # Return the poll results (PollResults schema)
             results_data = response.json()
+            # Validate response schema
+            if not _validate_poll_results_schema(results_data):
+                logger.error("Invalid PollResults schema received from server")
+                return None
             logger.info(f"Poll {poll_id} results fetched successfully")
             return results_data
         elif response.status_code == 404:
@@ -606,6 +747,264 @@ def get_poll_results(poll_id: int, base_url: str = "http://localhost:8000") -> O
     except requests.RequestException as e:
         logger.error(f"Poll results request failed: {e}")
         raise
+
+
+def cast_vote(poll_id: int, option_id: int, access_token: str, base_url: str = "http://localhost:8000") -> Optional[Dict[str, Any]]:
+    """
+    Client-side function to cast a vote on an existing poll.
+    
+    This is a wrapper around vote_on_poll() with enhanced error handling and validation.
+    
+    Args:
+        poll_id (int): The ID of the poll to vote on
+        option_id (int): The ID of the option to vote for
+        access_token (str): JWT access token for authentication
+        base_url (str): The base URL of the API (default: http://localhost:8000)
+    
+    Returns:
+        Optional[Dict[str, Any]]: Vote data if successful, None if failed
+        
+    Example:
+        >>> token = login_user("username", "password")
+        >>> if token:
+        ...     access_token = token["access_token"]
+        ...     vote_result = cast_vote(1, 2, access_token)
+        ...     if vote_result:
+        ...         print(f"Vote cast successfully: {vote_result}")
+    """
+    # Validate inputs
+    if not access_token:
+        logger.error("Access token is required to cast a vote")
+        return None
+    
+    if not isinstance(poll_id, int) or poll_id <= 0:
+        logger.error(f"Invalid poll_id: {poll_id}. Must be a positive integer.")
+        return None
+    
+    if not isinstance(option_id, int) or option_id <= 0:
+        logger.error(f"Invalid option_id: {option_id}. Must be a positive integer.")
+        return None
+    
+    logger.info(f"Attempting to cast vote on poll {poll_id} for option {option_id}")
+    
+    # Call the underlying vote function
+    vote_result = vote_on_poll(poll_id, option_id, access_token, base_url)
+    
+    if vote_result:
+        logger.info(f"Vote cast successfully on poll {poll_id} for option {option_id}")
+        return vote_result
+    else:
+        logger.warning(f"Failed to cast vote on poll {poll_id} for option {option_id}")
+        return None
+
+
+def retrieve_poll_results(poll_id: int, base_url: str = "http://localhost:8000") -> Optional[Dict[str, Any]]:
+    """
+    Client-side function to retrieve poll results.
+    
+    This is a wrapper around get_poll_results() with enhanced error handling and validation.
+    
+    Args:
+        poll_id (int): The ID of the poll to get results for
+        base_url (str): The base URL of the API (default: http://localhost:8000)
+    
+    Returns:
+        Optional[Dict[str, Any]]: Poll results if successful, None if failed
+        
+    Example:
+        >>> results = retrieve_poll_results(1)
+        >>> if results:
+        ...     print(f"Poll question: {results['question']}")
+        ...     for result in results['results']:
+        ...         print(f"Option {result['text']}: {result['vote_count']} votes")
+    """
+    # Validate inputs
+    if not isinstance(poll_id, int) or poll_id <= 0:
+        logger.error(f"Invalid poll_id: {poll_id}. Must be a positive integer.")
+        return None
+    
+    logger.info(f"Retrieving results for poll {poll_id}")
+    
+    # Call the underlying results function
+    results = get_poll_results(poll_id, base_url)
+    
+    if results:
+        logger.info(f"Successfully retrieved results for poll {poll_id}")
+        return results
+    else:
+        logger.warning(f"Failed to retrieve results for poll {poll_id}")
+        return None
+
+
+def cast_vote_with_validation(poll_id: int, option_id: int, access_token: str, base_url: str = "http://localhost:8000") -> Dict[str, Any]:
+    """
+    Enhanced client-side function to cast a vote with comprehensive validation and error handling.
+    
+    Args:
+        poll_id (int): The ID of the poll to vote on
+        option_id (int): The ID of the option to vote for
+        access_token (str): JWT access token for authentication
+        base_url (str): The base URL of the API (default: http://localhost:8000)
+    
+    Returns:
+        Dict[str, Any]: Dictionary containing success status, vote data, and error messages
+    """
+    # Validate inputs
+    if not access_token:
+        return {
+            "success": False,
+            "data": None,
+            "message": "Access token is required to cast a vote",
+            "error_type": "ValidationError"
+        }
+    
+    if not isinstance(poll_id, int) or poll_id <= 0:
+        return {
+            "success": False,
+            "data": None,
+            "message": f"Invalid poll_id: {poll_id}. Must be a positive integer.",
+            "error_type": "ValidationError"
+        }
+    
+    if not isinstance(option_id, int) or option_id <= 0:
+        return {
+            "success": False,
+            "data": None,
+            "message": f"Invalid option_id: {option_id}. Must be a positive integer.",
+            "error_type": "ValidationError"
+        }
+    
+    try:
+        # First, verify the poll exists and get its details
+        poll_data = get_poll_by_id(poll_id, base_url)
+        if not poll_data:
+            return {
+                "success": False,
+                "data": None,
+                "message": f"Poll {poll_id} not found",
+                "error_type": "NotFoundError"
+            }
+        
+        # Verify the option exists in the poll
+        valid_option_ids = [option["id"] for option in poll_data.get("options", [])]
+        if option_id not in valid_option_ids:
+            return {
+                "success": False,
+                "data": None,
+                "message": f"Option {option_id} not found in poll {poll_id}. Valid options: {valid_option_ids}",
+                "error_type": "ValidationError"
+            }
+        
+        # Cast the vote
+        vote_result = vote_on_poll(poll_id, option_id, access_token, base_url)
+        
+        if vote_result:
+            return {
+                "success": True,
+                "data": vote_result,
+                "message": f"Vote cast successfully on poll {poll_id} for option {option_id}",
+                "poll_info": {
+                    "poll_id": poll_id,
+                    "question": poll_data.get("question"),
+                    "option_id": option_id,
+                    "option_text": next((opt["text"] for opt in poll_data["options"] if opt["id"] == option_id), "Unknown")
+                }
+            }
+        else:
+            return {
+                "success": False,
+                "data": None,
+                "message": f"Failed to cast vote on poll {poll_id} for option {option_id}",
+                "error_type": "VoteError"
+            }
+            
+    except requests.RequestException as e:
+        return {
+            "success": False,
+            "data": None,
+            "message": f"Network error while casting vote: {str(e)}",
+            "error_type": "NetworkError"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "data": None,
+            "message": f"Unexpected error while casting vote: {str(e)}",
+            "error_type": "UnexpectedError"
+        }
+
+
+def retrieve_poll_results_with_validation(poll_id: int, base_url: str = "http://localhost:8000") -> Dict[str, Any]:
+    """
+    Enhanced client-side function to retrieve poll results with comprehensive validation and error handling.
+    
+    Args:
+        poll_id (int): The ID of the poll to get results for
+        base_url (str): The base URL of the API (default: http://localhost:8000)
+    
+    Returns:
+        Dict[str, Any]: Dictionary containing success status, results data, and error messages
+    """
+    # Validate inputs
+    if not isinstance(poll_id, int) or poll_id <= 0:
+        return {
+            "success": False,
+            "data": None,
+            "message": f"Invalid poll_id: {poll_id}. Must be a positive integer.",
+            "error_type": "ValidationError"
+        }
+    
+    try:
+        # First, verify the poll exists
+        poll_data = get_poll_by_id(poll_id, base_url)
+        if not poll_data:
+            return {
+                "success": False,
+                "data": None,
+                "message": f"Poll {poll_id} not found",
+                "error_type": "NotFoundError"
+            }
+        
+        # Get the results
+        results = get_poll_results(poll_id, base_url)
+        
+        if results:
+            # Calculate total votes
+            total_votes = sum(result.get("vote_count", 0) for result in results.get("results", []))
+            
+            return {
+                "success": True,
+                "data": results,
+                "message": f"Successfully retrieved results for poll {poll_id}",
+                "summary": {
+                    "poll_id": poll_id,
+                    "question": results.get("question"),
+                    "total_votes": total_votes,
+                    "option_count": len(results.get("results", []))
+                }
+            }
+        else:
+            return {
+                "success": False,
+                "data": None,
+                "message": f"Failed to retrieve results for poll {poll_id}",
+                "error_type": "ResultsError"
+            }
+            
+    except requests.RequestException as e:
+        return {
+            "success": False,
+            "data": None,
+            "message": f"Network error while retrieving results: {str(e)}",
+            "error_type": "NetworkError"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "data": None,
+            "message": f"Unexpected error while retrieving results: {str(e)}",
+            "error_type": "UnexpectedError"
+        }
 
 
 # Example usage
@@ -702,3 +1101,72 @@ if __name__ == "__main__":
             print(f"Poll deletion: {'Success' if delete_success else 'Failed'}")
     else:
         print("Login failed - cannot test authenticated endpoints")
+    
+    print("\n" + "="*50 + "\n")
+    
+    # Example 12: Client-side vote casting
+    print("Example 12: Client-side vote casting")
+    token_result = login_user("testuser2", "testpassword123")
+    if token_result:
+        access_token = token_result.get("access_token")
+        
+        # Get a poll to vote on
+        polls = fetch_polls(skip=0, limit=1)
+        if polls:
+            poll = polls[0]
+            poll_id = poll.get("id")
+            options = poll.get("options", [])
+            
+            if options:
+                option_id = options[0]["id"]
+                print(f"Voting on poll {poll_id}: '{poll.get('question')}'")
+                print(f"Voting for option: {options[0]['text']}")
+                
+                # Simple vote casting
+                vote_result = cast_vote(poll_id, option_id, access_token)
+                if vote_result:
+                    print(f"Vote cast successfully: {vote_result}")
+                else:
+                    print("Vote casting failed")
+                
+                # Enhanced vote casting with validation
+                print("\nEnhanced vote casting with validation:")
+                enhanced_result = cast_vote_with_validation(poll_id, option_id, access_token)
+                print(f"Enhanced result: {json.dumps(enhanced_result, indent=2)}")
+    
+    print("\n" + "="*50 + "\n")
+    
+    # Example 13: Client-side poll results retrieval
+    print("Example 13: Client-side poll results retrieval")
+    polls = fetch_polls(skip=0, limit=1)
+    if polls:
+        poll = polls[0]
+        poll_id = poll.get("id")
+        print(f"Retrieving results for poll {poll_id}: '{poll.get('question')}'")
+        
+        # Simple results retrieval
+        results = retrieve_poll_results(poll_id)
+        if results:
+            print(f"Poll results: {json.dumps(results, indent=2)}")
+        else:
+            print("Failed to retrieve poll results")
+        
+        # Enhanced results retrieval with validation
+        print("\nEnhanced results retrieval with validation:")
+        enhanced_results = retrieve_poll_results_with_validation(poll_id)
+        print(f"Enhanced results: {json.dumps(enhanced_results, indent=2)}")
+        
+        # Display results in a user-friendly format
+        if enhanced_results.get("success"):
+            data = enhanced_results["data"]
+            summary = enhanced_results["summary"]
+            print(f"\n📊 Poll Results Summary:")
+            print(f"Question: {summary['question']}")
+            print(f"Total Votes: {summary['total_votes']}")
+            print(f"Options: {summary['option_count']}")
+            print("\nVote Breakdown:")
+            for result in data.get("results", []):
+                percentage = (result.get("vote_count", 0) / max(summary['total_votes'], 1)) * 100
+                print(f"  • {result.get('text')}: {result.get('vote_count')} votes ({percentage:.1f}%)")
+    else:
+        print("No polls available to retrieve results from")
